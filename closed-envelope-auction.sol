@@ -1,86 +1,108 @@
-pragma solidity ^0.4.23;
+pragma solidity ^0.8.12;
+
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 contract ClosedEnvelopeAuction
 {
-    address auctionRunner = 0;
-    address highestBidder = 0;
-    uint256 highestBid = 0;
+    address public auctionRunner = address(0);
+    address public highestBidder = address(0);
+    uint256 public highestBid = 0;
+
     uint256 reservePrice = 0;
-    uint256 commitmentPhaseLength = 0;
-    uint256 revealPhaseLength = 0;
+    uint256 depositPrice = 0;
+
+    uint256 public commitmentStart;
+    uint256 public revealStart;
+    uint256 public auctionEnd;
+
+    mapping(address => bytes32) public hashedBids;
 
     enum AuctionPhase{ COMMITMENT, REVEAL }
-    AuctionPhase phase = AuctionPhase.COMMITMENT;
+    AuctionPhase public phase = AuctionPhase.COMMITMENT;
 
-    function startAuction(uint256 reserve, uint256 commitment, uint256 reveal) public
+    /*
+     * Start auction and save data
+     */
+    function startAuction(uint256 reserve, uint256 deposit, uint256 commitmentPhaseLength, uint256 revealPhaseLength) public
     {
+        // TODO - set phase
+
         reservePrice = reserve;
-        commitmentPhaseLength = commitment;
-        revealPhaseLength = reveal;
-        // save the user who runs the auction, they can toggle the phases
-        // set phase to bidding phase - maybe use enum?
-        // call method that prints out announcement of auction?
+        depositPrice = deposit;
 
+        commitmentStart = block.timestamp;
+        revealStart = block.timestamp + commitmentPhaseLength;
+        auctionEnd = revealStart + revealPhaseLength;
+        
+        auctionRunner = msg.sender;
     }
 
-    function Bid(uint256 hash) public
+    /*
+     * BY BIDDING, YOU ARE COMMITING TO CALLING REVEAL() DURING THE REVEAL PHASE.
+     * OTHERWISE, YOUR DEPOSIT WILL NOT BE RETURNED.
+     * This function called in the COMMITMENT PHASE. Called with value equal to deposit.
+     *      int hash - sha256 hash of bid amount and nounce concatenated
+     */
+    function bid(bytes32 hash) public payable
     {
-        /*
-         * This function represents the COMMITMENT PHASE
-         *      int hash - hash of bid amount, nounce
-         * the bidder picks their own nounce
-         * We can access who called this with msg.sender
-         */
+        // TODO - check that auction phase is COMMITMENT
 
-         // check that auction phase is COMMITMENT
-         // save the user and their hash
+        // ensure one bid per account
+        require(hashedBids[msg.sender] == 0);
 
+        // ensure deposit payed
+        require(msg.value == depositPrice);
+
+        //require(phase == AuctionPhase.COMMITMENT);
+
+        hashedBids[msg.sender] = hash;
     }
 
+
+    /*
+     * this function represents the REVEAL PHASE
+     *      uint256 amount - the amount bid
+     *      uint256 nounce - the nounce chosen by the user
+     * The bidder reveals both the bid and the nounce.
+     * The user calling the function is identified
+     * The hash of both is checked, if it does not match the hash it is ignored.
+     * If it does match, the amount is compared to other amounts
+     */
     function reveal(uint256 amount, uint256 nounce) public
     {
-        /*
-         * this function represents the REVEAL PHASE
-         *      uint256 amount - the amount bid
-         *      uint256 nounce - the nounce chosen by the user
-         * The bidder reveals both the bid and the nounce.
-         * The user calling the function is identified
-         * The hash of both is checked, if it does not match the hash it is ignored.
-         * If it does match, the amount is compared to other amounts
-         */
+        // TOOD - check that auction phase is REVEAL
+        // TODO - establish nounce limit
 
-         // check that auction phase is REVEAL
-         // check that the given user's amount matches the hash
-         // if their amount is highest, then update hightestBid and highestBidder
+        string memory bid = string.concat(Strings.toString(amount), Strings.toString(nounce));
+
+        require(hashedBids[msg.sender] == sha256(bytes(bid)));
+
+        if(amount > highestBid)
+        {
+            highestBid = amount;
+            highestBidder = msg.sender;
+        }
     }
 
-    function endAuction() public
+    /*
+     * check that winner is calling it, and ensure they sent the balance, 
+     * and set a flag to paid (TODO)
+     */
+    function claim() public payable
     {
-        /*
-         * called by the auction runner after the reveal phase is over 
-         * validates that the caller is the owner of the auction
-         * validates the auction is over
-         * prints out an announcement of winner
-         * if reserve price is not met, announce no winner
-         * should this be called automatically?
-         */
+        require(msg.sender == highestBidder);
+        require(msg.value == highestBid - depositPrice);
     }
 
-    function claim() public
+    /*
+     * Called by unsuccessful participants to recover their deposit
+     */
+    function recoverDeposit() public
     {
-        /*
-         * check that winner is calling it, and prompt them to send etherium
-         * 
-         */
+        // TODO - check the auction is over
+        require(hashedBids[msg.sender] != 0);
+        require(msg.sender != highestBidder);
+        payable(msg.sender).transfer(depositPrice);
     }
-
-    // in our paying, add functionallity to go to next highest bidder
-    // if nobody is above reserve, cancel auction
-
-    function announceAuctionStart() public
-    {
-        // print info about auction start
-    }
-
 
 }
