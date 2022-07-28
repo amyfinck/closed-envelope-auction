@@ -1,10 +1,11 @@
 pragma solidity ^0.8.12;
 
+// SPDX-License-Identifier: MIT
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 contract ClosedEnvelopeAuction
 {
-    address public auctionRunner = address(0);
+    address payable public auctionOwner = payable(address(0));
     address public highestBidder = address(0);
     uint256 public highestBid = 0;
 
@@ -15,9 +16,11 @@ contract ClosedEnvelopeAuction
     uint256 public revealStart;
     uint256 public auctionEnd;
 
+    bool claimed;
+
     mapping(address => bytes32) public hashedBids;
 
-    enum AuctionPhase{ COMMITMENT, REVEAL }
+    enum AuctionPhase{ COMMITMENT, REVEAL, ENDED, CLAIMED}
     AuctionPhase public phase = AuctionPhase.COMMITMENT;
 
     /*
@@ -25,7 +28,7 @@ contract ClosedEnvelopeAuction
      */
     function startAuction(uint256 reserve, uint256 deposit, uint256 commitmentPhaseLength, uint256 revealPhaseLength) public
     {
-        // TODO - set phase
+        phase = AuctionPhase.COMMITMENT;
 
         reservePrice = reserve;
         depositPrice = deposit;
@@ -34,18 +37,19 @@ contract ClosedEnvelopeAuction
         revealStart = block.timestamp + commitmentPhaseLength;
         auctionEnd = revealStart + revealPhaseLength;
         
-        auctionRunner = msg.sender;
+        auctionOwner = payable(msg.sender);
+        highestBidder = msg.sender;
     }
 
     /*
-     * BY BIDDING, YOU ARE COMMITING TO CALLING REVEAL() DURING THE REVEAL PHASE.
-     * OTHERWISE, YOUR DEPOSIT WILL NOT BE RETURNED.
+     * BY BIDDING, YOU ARE COMMITING TO CALLING Reveal() DURING THE REVEAL PHASE.
+     * AND RecoverDeposit() IN THE ENDED PHASE, OTHERWISE YOUR DEPOSIT WILL NOT BE RECOVERED.
      * This function called in the COMMITMENT PHASE. Called with value equal to deposit.
-     *      int hash - sha256 hash of bid amount and nounce concatenated
+     *      int hash - sha256 hash of bid amount and nonce concatenated
      */
     function bid(bytes32 hash) public payable
     {
-        // TODO - check that auction phase is COMMITMENT
+        require(phase == AuctionPhase.COMMITMENT);
 
         // ensure one bid per account
         require(hashedBids[msg.sender] == 0);
@@ -53,31 +57,28 @@ contract ClosedEnvelopeAuction
         // ensure deposit payed
         require(msg.value == depositPrice);
 
-        //require(phase == AuctionPhase.COMMITMENT);
-
         hashedBids[msg.sender] = hash;
     }
-
 
     /*
      * this function represents the REVEAL PHASE
      *      uint256 amount - the amount bid
-     *      uint256 nounce - the nounce chosen by the user
-     * The bidder reveals both the bid and the nounce.
+     *      uint256 nonce - the nonce chosen by the user
+     * The bidder reveals both the bid and the nonce.
      * The user calling the function is identified
      * The hash of both is checked, if it does not match the hash it is ignored.
      * If it does match, the amount is compared to other amounts
      */
-    function reveal(uint256 amount, uint256 nounce) public
+    function reveal(uint256 amount, uint256 nonce) public
     {
-        // TOOD - check that auction phase is REVEAL
-        // TODO - establish nounce limit
+        require(phase == AuctionPhase.REVEAL);
+        // TODO - establish nonce limit
 
-        string memory bid = string.concat(Strings.toString(amount), Strings.toString(nounce));
+        string memory bidString = string.concat(Strings.toString(amount), Strings.toString(nonce));
 
-        require(hashedBids[msg.sender] == sha256(bytes(bid)));
+        require(hashedBids[msg.sender] == sha256(bytes(bidString)));
 
-        if(amount > highestBid)
+        if(amount > highestBid && amount >= reservePrice)
         {
             highestBid = amount;
             highestBidder = msg.sender;
@@ -90,8 +91,12 @@ contract ClosedEnvelopeAuction
      */
     function claim() public payable
     {
+        require(!claimed);
+        require(phase == AuctionPhase.ENDED);
+
         require(msg.sender == highestBidder);
         require(msg.value == highestBid - depositPrice);
+        auctionOwner.transfer(highestBid);
     }
 
     /*
@@ -99,10 +104,20 @@ contract ClosedEnvelopeAuction
      */
     function recoverDeposit() public
     {
-        // TODO - check the auction is over
+        require(phase == AuctionPhase.ENDED);
+
         require(hashedBids[msg.sender] != 0);
         require(msg.sender != highestBidder);
         payable(msg.sender).transfer(depositPrice);
     }
 
+    function startRevealPhase() public
+    {
+        phase = AuctionPhase.REVEAL;
+    }
+
+    function endAuction() public
+    {
+        phase = AuctionPhase.ENDED;
+    }
 }
